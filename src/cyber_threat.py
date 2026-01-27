@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 from dataclasses import dataclass
+from typing import Iterable, Iterator
 
 import numpy as np
 
@@ -16,7 +17,11 @@ class CyberConfig:
     attack_rate: float = 0.02
 
 
-def generate_synthetic_security_events(
+Event = tuple[int, int, int, int, int, float, float, float, int]
+# (ts, user_id, ip_id, device_id, failed_logins, success_login, bytes_out, bytes_in, geo_km, is_attack)
+
+
+def iter_synthetic_security_events(
     *,
     seed: int,
     n_events: int,
@@ -24,89 +29,45 @@ def generate_synthetic_security_events(
     n_ips: int,
     n_devices: int,
     attack_rate: float,
-) -> dict[str, np.ndarray]:
-    """Generate auth + network-like events.
-
-    Each event is a single row with a binary label `is_attack`.
-    We inject several attack patterns:
-      - Credential stuffing: bursts of failed logins
-      - Account takeover: new device + far geo + success
-      - Data exfiltration: sudden bytes_out spike
-    """
+) -> Iterator[Event]:
+    """Stream events one-by-one (O(1) memory w.r.t. n_events)."""
 
     rng = np.random.default_rng(seed)
+    ts = 0
+    for _ in range(int(n_events)):
+        ts += int(rng.integers(0, 3))
 
-    user_id = rng.integers(0, n_users, size=n_events)
-    ip_id = rng.integers(0, n_ips, size=n_events)
-    device_id = rng.integers(0, n_devices, size=n_events)
+        user_id = int(rng.integers(0, n_users))
+        ip_id = int(rng.integers(0, n_ips))
+        device_id = int(rng.integers(0, n_devices))
 
-    # Relative timestamps (seconds). Not strictly used for modeling, but for "impossible travel" style features.
-    ts = np.cumsum(rng.integers(0, 3, size=n_events)).astype(int)
+        failed_logins = int(rng.poisson(lam=0.08))
+        success_login = int(rng.random() < 0.35)
 
-    # Basic traffic/auth signals
-    failed_logins = rng.poisson(lam=0.08, size=n_events).astype(int)
-    success_login = (rng.random(n_events) < 0.35).astype(int)
+        bytes_out = float(rng.lognormal(mean=float(np.log(60_000)), sigma=0.8))
+        bytes_in = float(rng.lognormal(mean=float(np.log(120_000)), sigma=0.8))
+        geo_km = float(rng.exponential(scale=30.0))
 
-    bytes_out = rng.lognormal(mean=np.log(60_000), sigma=0.8, size=n_events)
-    bytes_in = rng.lognormal(mean=np.log(120_000), sigma=0.8, size=n_events)
+        is_attack = int(rng.random() < float(attack_rate))
+        if is_attack:
+            attack_type = int(rng.integers(1, 4))
+            if attack_type == 1:
+                failed_logins += int(rng.integers(4, 14))
+                success_login = int(rng.random() < 0.05)
+                geo_km += float(rng.exponential(scale=150.0))
+            elif attack_type == 2:
+                success_login = 1
+                failed_logins += int(rng.integers(1, 4))
+                geo_km += float(rng.exponential(scale=400.0))
+                device_id = int(rng.integers(0, n_devices))
+            else:
+                bytes_out *= float(rng.uniform(20.0, 120.0))
+                bytes_in *= float(rng.uniform(0.2, 0.8))
 
-    # "Distance" from user home geo (km): most are near, some are far.
-    geo_km = rng.exponential(scale=30.0, size=n_events)
-
-    # Attack injection
-    is_attack = (rng.random(n_events) < attack_rate).astype(int)
-
-    attack_type = np.zeros(n_events, dtype=int)
-    # 1=stuffing, 2=takeover, 3=exfil
-    pick = np.where(is_attack == 1)[0]
-    if pick.size:
-        attack_type[pick] = rng.integers(1, 4, size=pick.size)
-
-        # Credential stuffing: many failed, mostly no success.
-        stuffing = pick[attack_type[pick] == 1]
-        if stuffing.size:
-            failed_logins[stuffing] += rng.integers(4, 14, size=stuffing.size)
-            success_login[stuffing] = (rng.random(stuffing.size) < 0.05).astype(int)
-            geo_km[stuffing] += rng.exponential(scale=150.0, size=stuffing.size)
-
-        # Account takeover: new device + far geo + success.
-        takeover = pick[attack_type[pick] == 2]
-        if takeover.size:
-            success_login[takeover] = 1
-            failed_logins[takeover] += rng.integers(1, 4, size=takeover.size)
-            geo_km[takeover] += rng.exponential(scale=400.0, size=takeover.size)
-            # Force device changes by randomizing devices more.
-            device_id[takeover] = rng.integers(0, n_devices, size=takeover.size)
-
-        # Data exfiltration: huge bytes_out.
-        exfil = pick[attack_type[pick] == 3]
-        if exfil.size:
-            bytes_out[exfil] *= rng.uniform(20.0, 120.0, size=exfil.size)
-            bytes_in[exfil] *= rng.uniform(0.2, 0.8, size=exfil.size)
-
-    return {
-        "ts": ts,
-        "user_id": user_id,
-        "ip_id": ip_id,
-        "device_id": device_id,
-        "failed_logins": failed_logins,
-        "success_login": success_login,
-        "bytes_out": bytes_out.astype(float),
-        "bytes_in": bytes_in.astype(float),
-        "geo_km": geo_km.astype(float),
-        "is_attack": is_attack,
-        "attack_type": attack_type,
-    }
+        yield (ts, user_id, ip_id, device_id, failed_logins, success_login, bytes_out, bytes_in, geo_km, is_attack)
 
 
-def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    y_true = y_true.astype(int)
-    y_pred = y_pred.astype(int)
-    tp = int(((y_true == 1) & (y_pred == 1)).sum())
-    tn = int(((y_true == 0) & (y_pred == 0)).sum())
-    fp = int(((y_true == 0) & (y_pred == 1)).sum())
-    fn = int(((y_true == 1) & (y_pred == 0)).sum())
-
+def _metrics_counts(tp: int, tn: int, fp: int, fn: int) -> dict[str, float]:
     acc = (tp + tn) / max(tp + tn + fp + fn, 1)
     prec = tp / max(tp + fp, 1)
     rec = tp / max(tp + fn, 1)
@@ -138,14 +99,15 @@ class OnlineUserState:
 
 
 def detect_threats_streaming(
-    events: dict[str, np.ndarray],
+    event_iter: Iterable[Event],
     *,
     n_users: int,
     z_out_threshold: float = 4.0,
     geo_far_km: float = 300.0,
     fail_burst_ewma: float = 2.5,
     ewma_alpha: float = 0.05,
-) -> tuple[np.ndarray, list[list[str]]]:
+    keep_examples: int = 0,
+) -> tuple[dict[str, float], list[str]]:
     """Streaming threat detection with explainable reasons.
 
     Output:
@@ -157,21 +119,14 @@ def detect_threats_streaming(
     - Keep detectors interpretable and fast (no heavy models needed for the demo).
     """
 
-    y_pred = np.zeros(len(events["ts"]), dtype=int)
-    reasons: list[list[str]] = [[] for _ in range(len(y_pred))]
-
     states = [OnlineUserState() for _ in range(int(n_users))]
 
-    for i in range(len(y_pred)):
-        uid = int(events["user_id"][i])
-        st = states[uid]
+    tp = tn = fp = fn = 0
+    flagged_examples: list[str] = []
 
-        ts = int(events["ts"][i])
-        dev = int(events["device_id"][i])
-        failed = int(events["failed_logins"][i])
-        success = int(events["success_login"][i])
-        geo = float(events["geo_km"][i])
-        outb = float(events["bytes_out"][i])
+    idx = 0
+    for (ts, uid, _ip, dev, failed, success, outb, _inb, geo, is_attack) in event_iter:
+        st = states[int(uid)]
 
         # Update EWMA for failed logins (burst detection)
         st.fail_ewma = (1.0 - ewma_alpha) * st.fail_ewma + ewma_alpha * float(failed)
@@ -186,34 +141,50 @@ def detect_threats_streaming(
         z = (outb - st.mean_out) / max(std, 1e-9)
 
         score = 0
+        why: list[str] = []
 
         if st.fail_ewma >= float(fail_burst_ewma) and failed >= 3:
             score += 2
-            reasons[i].append("failed_login_burst")
+            why.append("failed_login_burst")
 
         # ATO-ish: success from far geo and device changed
         if success == 1 and geo >= float(geo_far_km) and st.last_device != -1 and dev != st.last_device:
             score += 2
-            reasons[i].append("new_device_far_geo")
+            why.append("new_device_far_geo")
 
         # Exfil-ish: bytes_out spike compared to user baseline
         if st.count >= 25 and z >= float(z_out_threshold):
             score += 2
-            reasons[i].append("bytes_out_spike")
+            why.append("bytes_out_spike")
 
         # Mild heuristic: far geo without known context
         if geo >= float(geo_far_km) and success == 1:
             score += 1
-            reasons[i].append("far_geo_success")
+            why.append("far_geo_success")
 
         # Final decision: small integer score threshold
-        if score >= 3:
-            y_pred[i] = 1
+        pred = 1 if score >= 3 else 0
+        truth = int(is_attack)
+        if pred == 1 and truth == 1:
+            tp += 1
+        elif pred == 1 and truth == 0:
+            fp += 1
+        elif pred == 0 and truth == 0:
+            tn += 1
+        else:
+            fn += 1
+
+        if keep_examples and pred == 1 and len(flagged_examples) < int(keep_examples):
+            why_str = ",".join(why) if why else "(no_reason)"
+            flagged_examples.append(
+                f"- idx={idx} user={int(uid)} truth={truth} success={int(success)} failed={int(failed)} geo_km={float(geo):.0f} bytes_out={float(outb):,.0f} reasons=[{why_str}]"
+            )
 
         st.last_device = dev
         st.last_ts = ts
+        idx += 1
 
-    return y_pred, reasons
+    return _metrics_counts(tp, tn, fp, fn), flagged_examples
 
 
 def main() -> None:
@@ -225,11 +196,24 @@ def main() -> None:
     parser.add_argument("--n-devices", type=int, default=CyberConfig.n_devices)
     parser.add_argument("--attack-rate", type=float, default=CyberConfig.attack_rate)
     parser.add_argument("--show", type=int, default=8, help="Print N flagged examples")
+    parser.add_argument(
+        "--benchmark-events",
+        type=int,
+        default=None,
+        help="Process only the first N events and estimate full runtime (recommended for 100M+)",
+    )
     args = parser.parse_args()
 
-    events = generate_synthetic_security_events(
+    n_requested = int(args.n_events)
+    n_process = int(args.benchmark_events) if args.benchmark_events is not None else n_requested
+    n_process = min(n_process, n_requested)
+
+    if args.benchmark_events is not None and n_process < n_requested:
+        print(f"\n[Benchmark] Processing {n_process:,} of {n_requested:,} events (estimate full runtime).")
+
+    event_iter = iter_synthetic_security_events(
         seed=int(args.seed),
-        n_events=int(args.n_events),
+        n_events=n_process,
         n_users=int(args.n_users),
         n_ips=int(args.n_ips),
         n_devices=int(args.n_devices),
@@ -237,15 +221,14 @@ def main() -> None:
     )
 
     t0 = time.perf_counter()
-    y_pred, reasons = detect_threats_streaming(events, n_users=int(args.n_users))
+    m, examples = detect_threats_streaming(event_iter, n_users=int(args.n_users), keep_examples=int(args.show))
     dt = max(time.perf_counter() - t0, 1e-9)
 
-    y_true = events["is_attack"].astype(int)
-    m = _metrics(y_true, y_pred)
-
+    ev_per_sec = n_process / dt
+    est_full_sec = (n_requested / ev_per_sec) if ev_per_sec > 0 else float("inf")
     print(
-        f"\n[Cyber] events={int(args.n_events):,} users={int(args.n_users):,} attack_rate={float(args.attack_rate):.3f} "
-        f"speed={int(args.n_events)/dt:,.0f} ev/s elapsed={dt:.2f}s"
+        f"\n[Cyber] processed={n_process:,} elapsed={dt:.2f}s speed={ev_per_sec:,.0f} ev/s "
+        f"est_full={est_full_sec/60:.1f} min for {n_requested:,} events"
     )
     print(
         f"[Cyber] acc={m['accuracy']:.3f} prec_attack={m['precision_attack']:.3f} rec_attack={m['recall_attack']:.3f} "
@@ -254,19 +237,9 @@ def main() -> None:
 
     show = max(0, int(args.show))
     if show:
-        flagged = np.where(y_pred == 1)[0]
-        print(f"\n[Cyber] flagged_examples={min(show, int(flagged.size))}/{int(flagged.size)}")
-        for j in flagged[:show]:
-            uid = int(events["user_id"][j])
-            geo = float(events["geo_km"][j])
-            outb = float(events["bytes_out"][j])
-            failed = int(events["failed_logins"][j])
-            success = int(events["success_login"][j])
-            truth = int(events["is_attack"][j])
-            why = ",".join(reasons[int(j)]) if reasons[int(j)] else "(no_reason)"
-            print(
-                f"- idx={int(j)} user={uid} truth={truth} success={success} failed={failed} geo_km={geo:.0f} bytes_out={outb:,.0f} reasons=[{why}]"
-            )
+        print(f"\n[Cyber] flagged_examples={len(examples)}/{show}")
+        for line in examples:
+            print(line)
 
 
 if __name__ == "__main__":

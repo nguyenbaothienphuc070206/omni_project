@@ -30,7 +30,7 @@ This repo also includes 3 extra, lightweight demos that match hackathon problem 
 
 1. **Credit scoring / creditworthiness**: [src/credit_scoring.py](src/credit_scoring.py)
 2. **Personalized financial advisory**: [src/advisory.py](src/advisory.py)
-4. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
+3. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
 
 All three are intentionally:
 
@@ -303,6 +303,10 @@ Run:
 
 ```bash
 .\.venv\Scripts\python.exe -m src.cyber_threat --n-events 200000 --attack-rate 0.02 --show 8
+
+# Huge-scale (100M+) screenshot-friendly benchmark:
+.\.venv\Scripts\python.exe -m src.cyber_threat --n-events 100000000 --attack-rate 0.02 --benchmark-events 2000000 --show 8
+.\.venv\Scripts\python.exe -m src.cyber_threat --n-events 123456789 --attack-rate 0.02 --benchmark-events 2000000 --show 8
 ```
 
 Output highlights:
@@ -310,6 +314,19 @@ Output highlights:
 - event throughput (ev/s) + elapsed time
 - precision/recall/F1 for attacks + FPR
 - flagged examples with reasons like `failed_login_burst`, `bytes_out_spike`, `new_device_far_geo`
+
+## Run everything (tracks 1,2,3,4)
+
+If you want one command that prints everything in order (useful for screenshots), run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.run_all --hard --targets 100000000 123456789 --benchmark 2000000
+```
+
+Notes:
+
+- Tracks 1/2 are customer-level demos and do not use `--targets` as "transactions".
+- Tracks 3/4 are the big-scale tracks; by default this runner uses benchmark slices to estimate full runtime.
 
 ### Large-scale run (100M+ transactions)
 
