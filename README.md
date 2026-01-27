@@ -30,7 +30,7 @@ This repo also includes 3 extra, lightweight demos that match hackathon problem 
 
 1. **Credit scoring / creditworthiness**: [src/credit_scoring.py](src/credit_scoring.py)
 2. **Personalized financial advisory**: [src/advisory.py](src/advisory.py)
-3. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
+4. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
 
 All three are intentionally:
 
@@ -120,15 +120,15 @@ Command used (seed=7, hard mode, benchmark slice = 2,000,000 tx):
 
 | Target Transactions |     Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |   fpr |
 | ------------------: | --------: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ----: |
-|         100,000,000 | 2,000,000 |       58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
-|         123,456,789 | 2,000,000 |       39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+|         100,000,000 | 2,000,000 |       54.81 |       36,488 |           45.7 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+|         123,456,789 | 2,000,000 |       42.89 |       46,634 |           44.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
 
 ```mermaid
 xychart-beta
 	title "Streaming estimated runtime vs target transactions (Phase 1-only, seed=7, hard)"
 	x-axis [100000000, 123456789]
 	y-axis "est_full_minutes" 0 --> 60
-	line [49.1, 40.2]
+	line [45.7, 44.1]
 ```
 
 ```mermaid
@@ -136,7 +136,7 @@ xychart-beta
 	title "Streaming throughput vs target transactions (Phase 1-only, seed=7, hard)"
 	x-axis [100000000, 123456789]
 	y-axis "tx_per_second" 0 --> 60000
-	line [33917, 51148]
+	line [36488, 46634]
 ```
 
 ## Diagrams
@@ -308,6 +308,13 @@ Run:
 .\.venv\Scripts\python.exe -m src.cyber_threat --n-events 100000000 --attack-rate 0.02 --benchmark-events 2000000 --show 8
 .\.venv\Scripts\python.exe -m src.cyber_threat --n-events 123456789 --attack-rate 0.02 --benchmark-events 2000000 --show 8
 ```
+
+Latest huge-scale benchmark results (seed=7, benchmark slice=2,000,000 events):
+
+| Target Events |     Slice | elapsed (s) | speed (ev/s) | est_full (min) | accuracy | precision_attack | recall_attack | f1_attack |   fpr |
+| -----------: | --------: | ----------: | -----------: | -------------: | -------: | ---------------: | ------------: | --------: | ----: |
+|  100,000,000 | 2,000,000 |      32.55 |       61,445 |           27.1 |    0.983 |            0.996 |         0.175 |     0.298 | 0.000 |
+|  123,456,789 | 2,000,000 |      31.72 |       63,058 |           32.6 |    0.983 |            0.996 |         0.175 |     0.298 | 0.000 |
 
 Output highlights:
 
