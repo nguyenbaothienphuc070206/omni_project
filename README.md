@@ -255,13 +255,13 @@ Outputs:
 
 ## Code walkthrough (focused, no code dumping)
 
-This section explains the *important blocks* in each file (what it does, why it exists, and what to change), without pasting the whole file.
+This section explains the _important blocks_ in each file (what it does, why it exists, and what to change), without pasting the whole file.
 
 ### Phase 1 — stats filter + priors
 
 #### `src/stats_layer.py`
 
-1) **Z-score helper**: stable even when std=0.
+1. **Z-score helper**: stable even when std=0.
 
 ```python
 def _safe_zscore(series: pd.Series) -> pd.Series:
@@ -274,7 +274,7 @@ def _safe_zscore(series: pd.Series) -> pd.Series:
 
 - Why this way: avoids division-by-zero on flat data; predictable output.
 
-2) **Velocity feature**: per-user burstiness inside a time window.
+2. **Velocity feature**: per-user burstiness inside a time window.
 
 ```python
 for user_id, grp in out.groupby("user_id", sort=False):
@@ -287,7 +287,7 @@ for user_id, grp in out.groupby("user_id", sort=False):
 
 - Why this way: sliding-window is O(n) per user after sorting; interpretable.
 
-3) **Anomaly score**: normalized combination of amount outlier + velocity.
+3. **Anomaly score**: normalized combination of amount outlier + velocity.
 
 ```python
 z_component = clip(|z|/z_thr)
@@ -298,7 +298,7 @@ anomaly = 0.55*z_component + 0.45*v_component
 - Why this weighting: keeps model simple; amount outliers slightly more important than velocity.
 - What to tune: `amount_z_threshold`, `velocity_threshold`, and the 0.55/0.45 weights.
 
-4) **User priors**: aggregate transactions → per-user features + label.
+4. **User priors**: aggregate transactions → per-user features + label.
 
 ```python
 agg = df.groupby("user_id").agg(
@@ -339,7 +339,7 @@ edges[("device","used_by","user")] = (d, u)
 
 #### `src/model_torch.py`
 
-1) **No external scatter lib**: use core torch `index_add_`.
+1. **No external scatter lib**: use core torch `index_add_`.
 
 ```python
 out = torch.zeros((dim_size, src.shape[1]), ...)
@@ -348,7 +348,7 @@ out.index_add_(0, index, src)
 
 - Why this: highest install success on Windows; still fast enough for demo graphs.
 
-2) **Typed relations**: each relation has its own linear transform.
+2. **Typed relations**: each relation has its own linear transform.
 
 ```python
 self.rel_linear["user:uses_device:device"]
@@ -381,7 +381,7 @@ while q:
 
 #### `src/train.py`
 
-1) **Cascade routing**: stats handles CLEAR; model handles GRAY.
+1. **Cascade routing**: stats handles CLEAR; model handles GRAY.
 
 ```python
 if decision == "CLEAR_FRAUD": p = 1
@@ -391,7 +391,7 @@ else: p = int(probs[user] >= thr)
 
 - Why cascade: lower latency + fewer false positives + simpler failure modes.
 
-2) **Huge-scale demo mode** (streaming Phase 1-only):
+2. **Huge-scale demo mode** (streaming Phase 1-only):
 
 ```bash
 python -m src.train --stream --phase1-only --n-transactions 100000000
@@ -399,7 +399,7 @@ python -m src.train --stream --phase1-only --n-transactions 100000000
 
 - Why Phase1-only for 100M+: full graph training is not practical at that scale in a hackathon demo.
 
-3) **Benchmark slice**: run a small prefix and estimate full runtime (for screenshots).
+3. **Benchmark slice**: run a small prefix and estimate full runtime (for screenshots).
 
 ```bash
 python -m src.train --stream --phase1-only --n-transactions 100000000 --benchmark-transactions 2000000
