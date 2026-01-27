@@ -221,6 +221,14 @@ py -m src.train
 .\.venv\Scripts\python.exe -m src.train
 ```
 
+### Large-scale run (100M+ transactions)
+
+For extremely large `--n-transactions` (e.g. `100000000` or `123456789`), use streaming mode so we don't build a giant DataFrame:
+
+```bash
+.\.venv\Scripts\python.exe -m src.train --stream --phase1-only --hard --n-transactions 123456789
+```
+
 Outputs:
 
 - counts of `CLEAR_LEGIT`, `CLEAR_FRAUD`, `GRAY`

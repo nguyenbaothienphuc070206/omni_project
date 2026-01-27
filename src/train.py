@@ -8,8 +8,8 @@ import numpy as np
 from sklearn.metrics import classification_report
 
 from .config import DataConfig, StatsConfig, TrainConfig
-from .data import generate_synthetic_transactions
-from .stats_layer import run_statistical_filter, user_priors_from_transactions
+from .data import generate_synthetic_transactions, iter_synthetic_transactions
+from .stats_layer import run_statistical_filter, stream_user_priors_from_transactions, user_priors_from_transactions
 
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts"
@@ -150,6 +150,8 @@ def run_once(
     seed: int,
     hard_mode: bool,
     time_split: bool,
+    stream: bool = False,
+    phase1_only: bool = False,
     n_transactions: int | None = None,
     n_users: int | None = None,
     n_devices: int | None = None,
@@ -161,13 +163,65 @@ def run_once(
     stats_cfg = StatsConfig()
     train_cfg = TrainConfig()
 
+    n_users_eff = int(n_users) if n_users is not None else int(data_cfg.n_users)
+    n_devices_eff = int(n_devices) if n_devices is not None else int(data_cfg.n_devices)
+    n_ips_eff = int(n_ips) if n_ips is not None else int(data_cfg.n_ips)
+    n_phones_eff = int(n_phones) if n_phones is not None else int(data_cfg.n_phones)
+    n_tx_eff = int(n_transactions) if n_transactions is not None else int(data_cfg.n_transactions)
+
+    # Auto-stream for huge transaction counts to avoid DataFrame blowups.
+    use_stream = bool(stream) or (n_tx_eff >= 2_000_000)
+
+    if use_stream:
+        tx_iter = iter_synthetic_transactions(
+            seed=seed,
+            n_users=n_users_eff,
+            n_devices=n_devices_eff,
+            n_ips=n_ips_eff,
+            n_phones=n_phones_eff,
+            n_transactions=n_tx_eff,
+            base_fraud_rate=data_cfg.base_fraud_rate,
+            hard_mode=bool(hard_mode),
+        )
+
+        user_table, counts, _split_users = stream_user_priors_from_transactions(
+            tx_iter,
+            n_users=n_users_eff,
+            amount_z_threshold=stats_cfg.amount_z_threshold,
+            velocity_window_seconds=stats_cfg.velocity_window_seconds,
+            velocity_threshold=stats_cfg.velocity_threshold,
+            clear_fraud_score=stats_cfg.clear_fraud_score,
+            clear_legit_score=stats_cfg.clear_legit_score,
+            time_split=bool(time_split),
+        )
+
+        print("\n[Phase 1] Statistical filter decisions:")
+        print(json.dumps(counts, indent=2))
+
+        # Phase-1-only mode is the intended path for very large N.
+        if phase1_only or n_tx_eff >= 2_000_000:
+            y_true = user_table["user_label"].to_numpy(dtype=int)
+            # Baseline: only CLEAR_FRAUD => fraud; GRAY treated as legit (fail-open).
+            y_pred = (user_table["user_stats_decision"].to_numpy() == "CLEAR_FRAUD").astype(int)
+            summary = _metrics_summary(y_true, y_pred)
+            cc = _confusion_counts(y_true, y_pred)
+            print("\n[Phase 1 Only] User-level metrics (CLEAR_FRAUD vs rest):")
+            print(
+                f"acc={summary['accuracy']:.3f} prec_fraud={summary['precision_fraud']:.3f} rec_fraud={summary['recall_fraud']:.3f} "
+                f"f1_fraud={summary['f1_fraud']:.3f} fpr={summary['fpr']:.3f} tp={cc['tp']} fp={cc['fp']} tn={cc['tn']} fn={cc['fn']}"
+            )
+            return summary
+
+        # If someone explicitly disables phase1_only, fall back to the small-data path below.
+        # (Keeping code simple: full Phase 2/3 needs transaction-level tables.)
+
     df = generate_synthetic_transactions(
         seed=seed,
-        n_users=int(n_users) if n_users is not None else data_cfg.n_users,
-        n_devices=int(n_devices) if n_devices is not None else data_cfg.n_devices,
-        n_ips=int(n_ips) if n_ips is not None else data_cfg.n_ips,
-        n_phones=int(n_phones) if n_phones is not None else data_cfg.n_phones,
-        n_transactions=int(n_transactions) if n_transactions is not None else data_cfg.n_transactions,
+        n_users=n_users_eff,
+        n_devices=n_devices_eff,
+        n_ips=n_ips_eff,
+        n_phones=n_phones_eff,
+        n_transactions=n_tx_eff,
         base_fraud_rate=data_cfg.base_fraud_rate,
     )
 
@@ -393,6 +447,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7, help="Base seed (default: 7)")
     parser.add_argument("--hard", action="store_true", help="Enable harder synthetic mode (benign hubs + fraud camouflage)")
     parser.add_argument("--time-split", action="store_true", help="Use a time-based split (rough production-like check)")
+    parser.add_argument("--stream", action="store_true", help="Stream transactions (enables huge --n-transactions without DataFrame)")
+    parser.add_argument("--phase1-only", action="store_true", help="Run only Phase 1 (recommended for very large --n-transactions)")
     parser.add_argument("--n-transactions", type=int, default=None, help="Override number of transactions (cases)")
     parser.add_argument("--n-users", type=int, default=None, help="Override number of users")
     parser.add_argument("--n-devices", type=int, default=None, help="Override number of devices")
@@ -410,6 +466,8 @@ def main() -> None:
                 seed=run_seed,
                 hard_mode=bool(args.hard),
                 time_split=bool(args.time_split),
+                stream=bool(args.stream),
+                phase1_only=bool(args.phase1_only),
                 n_transactions=args.n_transactions,
                 n_users=args.n_users,
                 n_devices=args.n_devices,
