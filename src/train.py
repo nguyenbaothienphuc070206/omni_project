@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import classification_report
 
 from .config import DataConfig, StatsConfig, TrainConfig
 from .data import generate_synthetic_transactions, iter_synthetic_transactions
@@ -14,6 +13,14 @@ from .stats_layer import run_statistical_filter, stream_user_priors_from_transac
 
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts"
+
+
+def _classification_report(y_true: np.ndarray, y_pred: np.ndarray) -> str:
+    """Lazy import to keep Phase1-only streaming runs lightweight."""
+
+    from sklearn.metrics import classification_report
+
+    return classification_report(y_true, y_pred, digits=3, zero_division=0)
 
 
 def _stratified_split_indices(y: "np.ndarray", *, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -397,14 +404,7 @@ def run_once(
             pred = (probs >= val_thr).long()
 
         print("\n[Test] User-level report (gray-subset if enabled):")
-        print(
-            classification_report(
-                y[test_idx].cpu().numpy(),
-                pred[test_idx].cpu().numpy(),
-                digits=3,
-                zero_division=0,
-            )
-        )
+        print(_classification_report(y[test_idx].cpu().numpy(), pred[test_idx].cpu().numpy()))
         print(f"Chosen validation threshold: {val_thr:.2f}")
 
         # Save artifacts
@@ -462,7 +462,7 @@ def run_once(
                 cascade_y.append(true_y)
 
             print("\n[Cascade] Combined stats + GNN report (user-level, test split):")
-            print(classification_report(np.array(cascade_y), np.array(cascade_pred), digits=3, zero_division=0))
+            print(_classification_report(np.array(cascade_y), np.array(cascade_pred)))
 
             summary = _metrics_summary(np.array(cascade_y), np.array(cascade_pred))
             cc = _confusion_counts(np.array(cascade_y), np.array(cascade_pred))
