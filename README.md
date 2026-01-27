@@ -100,10 +100,10 @@ For very large transaction counts, we benchmark Phase 1 in streaming mode and es
 
 Command used (seed=7, hard mode, benchmark slice = 2,000,000 tx):
 
-| Target Transactions | Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |  fpr |
-| ------------------: | ----: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ---: |
-|         100,000,000 | 2,000,000 |      58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
-|         123,456,789 | 2,000,000 |      39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+| Target Transactions |     Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |   fpr |
+| ------------------: | --------: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ----: |
+|         100,000,000 | 2,000,000 |       58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+|         123,456,789 | 2,000,000 |       39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
 
 ```mermaid
 xychart-beta

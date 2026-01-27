@@ -60,10 +60,10 @@ Mean ± std:
 
 These are Phase 1-only user-level metrics using the built-in threshold-on-GRAY rule, plus a streaming speed estimate.
 
-| Target Transactions | Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |  fpr |
-| ------------------: | ----: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ---: |
-|         100,000,000 | 2,000,000 |      58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
-|         123,456,789 | 2,000,000 |      39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+| Target Transactions |     Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |   fpr |
+| ------------------: | --------: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ----: |
+|         100,000,000 | 2,000,000 |       58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+|         123,456,789 | 2,000,000 |       39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
 
 ## Diagram: metrics overview
 
