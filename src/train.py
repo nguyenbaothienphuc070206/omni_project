@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -152,6 +153,9 @@ def run_once(
     time_split: bool,
     stream: bool = False,
     phase1_only: bool = False,
+    benchmark_transactions: int | None = None,
+    phase1_threshold: float | None = None,
+    log_every: int = 0,
     n_transactions: int | None = None,
     n_users: int | None = None,
     n_devices: int | None = None,
@@ -173,17 +177,25 @@ def run_once(
     use_stream = bool(stream) or (n_tx_eff >= 2_000_000)
 
     if use_stream:
+        n_requested = n_tx_eff
+        n_process = int(benchmark_transactions) if benchmark_transactions is not None else n_tx_eff
+        n_process = min(n_process, n_requested)
+
+        if benchmark_transactions is not None and n_process < n_requested:
+            print(f"\n[Benchmark] Processing {n_process:,} of {n_requested:,} transactions (estimate full runtime).")
+
         tx_iter = iter_synthetic_transactions(
             seed=seed,
             n_users=n_users_eff,
             n_devices=n_devices_eff,
             n_ips=n_ips_eff,
             n_phones=n_phones_eff,
-            n_transactions=n_tx_eff,
+            n_transactions=n_process,
             base_fraud_rate=data_cfg.base_fraud_rate,
             hard_mode=bool(hard_mode),
         )
 
+        t0 = time.perf_counter()
         user_table, counts, _split_users = stream_user_priors_from_transactions(
             tx_iter,
             n_users=n_users_eff,
@@ -193,6 +205,19 @@ def run_once(
             clear_fraud_score=stats_cfg.clear_fraud_score,
             clear_legit_score=stats_cfg.clear_legit_score,
             time_split=bool(time_split),
+            max_transactions=n_process,
+        )
+        dt = max(time.perf_counter() - t0, 1e-9)
+
+        if log_every and n_process >= int(log_every):
+            # We don't print inside the hot loop; just summarize after.
+            pass
+
+        tx_per_sec = n_process / dt
+        est_full_sec = (n_requested / tx_per_sec) if tx_per_sec > 0 else float("inf")
+        print(
+            f"[Streaming] processed={n_process:,} elapsed={dt:.2f}s speed={tx_per_sec:,.0f} tx/s "
+            f"est_full={est_full_sec/60:.1f} min for {n_requested:,} tx"
         )
 
         print("\n[Phase 1] Statistical filter decisions:")
@@ -200,12 +225,28 @@ def run_once(
 
         # Phase-1-only mode is the intended path for very large N.
         if phase1_only or n_tx_eff >= 2_000_000:
-            y_true = user_table["user_label"].to_numpy(dtype=int)
-            # Baseline: only CLEAR_FRAUD => fraud; GRAY treated as legit (fail-open).
-            y_pred = (user_table["user_stats_decision"].to_numpy() == "CLEAR_FRAUD").astype(int)
-            summary = _metrics_summary(y_true, y_pred)
-            cc = _confusion_counts(y_true, y_pred)
-            print("\n[Phase 1 Only] User-level metrics (CLEAR_FRAUD vs rest):")
+            y_all = user_table["user_label"].to_numpy(dtype=int)
+            s_all = user_table["prior_anomaly_score"].to_numpy(dtype=float)
+
+            # Choose a user-level threshold on validation to improve detection on GRAY users.
+            # This keeps code simple and gives a much better demo than CLEAR_FRAUD-only.
+            if phase1_threshold is None:
+                tr_u, va_u, te_u = _stratified_split_indices(y_all, seed=seed)
+                thr = _pick_threshold(y_all[va_u], s_all[va_u])
+            else:
+                thr = float(phase1_threshold)
+
+            decision = user_table["user_stats_decision"].to_numpy(dtype=object)
+            y_pred = np.zeros_like(y_all)
+            y_pred[decision == "CLEAR_FRAUD"] = 1
+            y_pred[decision == "CLEAR_LEGIT"] = 0
+            gray_mask = decision == "GRAY"
+            y_pred[gray_mask] = (s_all[gray_mask] >= thr).astype(int)
+
+            summary = _metrics_summary(y_all, y_pred)
+            cc = _confusion_counts(y_all, y_pred)
+            print(f"\n[Phase 1 Only] Chosen user threshold (prior_anomaly_score): {thr:.2f}")
+            print("[Phase 1 Only] User-level metrics (CLEAR + threshold-on-GRAY):")
             print(
                 f"acc={summary['accuracy']:.3f} prec_fraud={summary['precision_fraud']:.3f} rec_fraud={summary['recall_fraud']:.3f} "
                 f"f1_fraud={summary['f1_fraud']:.3f} fpr={summary['fpr']:.3f} tp={cc['tp']} fp={cc['fp']} tn={cc['tn']} fn={cc['fn']}"
@@ -449,6 +490,24 @@ def main() -> None:
     parser.add_argument("--time-split", action="store_true", help="Use a time-based split (rough production-like check)")
     parser.add_argument("--stream", action="store_true", help="Stream transactions (enables huge --n-transactions without DataFrame)")
     parser.add_argument("--phase1-only", action="store_true", help="Run only Phase 1 (recommended for very large --n-transactions)")
+    parser.add_argument(
+        "--benchmark-transactions",
+        type=int,
+        default=None,
+        help="In streaming mode, process only the first N transactions and estimate full runtime",
+    )
+    parser.add_argument(
+        "--phase1-threshold",
+        type=float,
+        default=None,
+        help="Manual user-level threshold on prior_anomaly_score for Phase1-only (default: auto on validation)",
+    )
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=0,
+        help="(Reserved) progress logging interval for very long runs (default: 0)",
+    )
     parser.add_argument("--n-transactions", type=int, default=None, help="Override number of transactions (cases)")
     parser.add_argument("--n-users", type=int, default=None, help="Override number of users")
     parser.add_argument("--n-devices", type=int, default=None, help="Override number of devices")
@@ -468,6 +527,9 @@ def main() -> None:
                 time_split=bool(args.time_split),
                 stream=bool(args.stream),
                 phase1_only=bool(args.phase1_only),
+                benchmark_transactions=args.benchmark_transactions,
+                phase1_threshold=args.phase1_threshold,
+                log_every=int(args.log_every),
                 n_transactions=args.n_transactions,
                 n_users=args.n_users,
                 n_devices=args.n_devices,

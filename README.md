@@ -223,7 +223,16 @@ py -m src.train
 
 ### Large-scale run (100M+ transactions)
 
-For extremely large `--n-transactions` (e.g. `100000000` or `123456789`), use streaming mode so we don't build a giant DataFrame:
+For extremely large `--n-transactions` (e.g. `100000000` or `123456789`), use streaming mode so we don't build a giant DataFrame.
+
+For a quick demo screenshot (fast), run a benchmark slice and print an estimated full runtime:
+
+```bash
+.\.venv\Scripts\python.exe -m src.train --stream --phase1-only --hard --n-transactions 100000000 --benchmark-transactions 2000000
+.\.venv\Scripts\python.exe -m src.train --stream --phase1-only --hard --n-transactions 123456789 --benchmark-transactions 2000000
+```
+
+For the full run (can take a long time), remove `--benchmark-transactions`.
 
 ```bash
 .\.venv\Scripts\python.exe -m src.train --stream --phase1-only --hard --n-transactions 123456789

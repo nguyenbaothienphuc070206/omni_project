@@ -146,6 +146,7 @@ def stream_user_priors_from_transactions(
     clear_fraud_score: float,
     clear_legit_score: float,
     time_split: bool = False,
+    max_transactions: int | None = None,
 ) -> tuple[pd.DataFrame, dict[str, int], tuple[set[int], set[int], set[int]] | None]:
     """Streaming equivalent of Phase-1 + user priors.
 
@@ -186,7 +187,11 @@ def stream_user_priors_from_transactions(
     except Exception:
         n_total = None
 
+    cap = int(max(8, 2 * int(velocity_threshold)))
+
     for tx_id, ts, user_id, device_id, ip_id, phone_id, amount, label in tx_iter:
+        if max_transactions is not None and tx_seen >= int(max_transactions):
+            break
         u = int(user_id)
         if u < 0 or u >= n_users:
             continue
@@ -202,6 +207,9 @@ def stream_user_priors_from_transactions(
         t = int(ts)
         dq.append(t)
         while dq and (t - dq[0] > int(velocity_window_seconds)):
+            dq.popleft()
+        # We clip velocity contribution anyway, so cap the queue length for speed.
+        while len(dq) > cap:
             dq.popleft()
         v = len(dq)
         if v > max_velocity[u]:
@@ -230,9 +238,9 @@ def stream_user_priors_from_transactions(
         if decision != "CLEAR_LEGIT":
             all_clear_legit[u] = False
 
+        tx_seen += 1
         if split_users is not None:
             # Use n_total if known; otherwise approximate by running thresholds (still stable for huge N).
-            tx_seen += 1
             if n_total is None:
                 # Simple 70/15/15 based on running index modulo 100.
                 m = tx_seen % 100
