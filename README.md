@@ -94,6 +94,33 @@ xychart-beta
 	line [1.0, 0.867, 1.0, 1.0]
 ```
 
+### Huge-scale streaming benchmark (Phase 1-only)
+
+For very large transaction counts, we benchmark Phase 1 in streaming mode and estimate full runtime.
+
+Command used (seed=7, hard mode, benchmark slice = 2,000,000 tx):
+
+| Target Transactions | Slice | elapsed (s) | speed (tx/s) | est_full (min) | user_thr | accuracy | precision_fraud | recall_fraud | f1_fraud |  fpr |
+| ------------------: | ----: | ----------: | -----------: | -------------: | -------: | -------: | --------------: | -----------: | -------: | ---: |
+|         100,000,000 | 2,000,000 |      58.97 |       33,917 |           49.1 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+|         123,456,789 | 2,000,000 |      39.10 |       51,148 |           40.2 |     0.15 |    1.000 |           1.000 |        1.000 |    1.000 | 0.000 |
+
+```mermaid
+xychart-beta
+	title "Streaming estimated runtime vs target transactions (Phase 1-only, seed=7, hard)"
+	x-axis [100000000, 123456789]
+	y-axis "est_full_minutes" 0 --> 60
+	line [49.1, 40.2]
+```
+
+```mermaid
+xychart-beta
+	title "Streaming throughput vs target transactions (Phase 1-only, seed=7, hard)"
+	x-axis [100000000, 123456789]
+	y-axis "tx_per_second" 0 --> 60000
+	line [33917, 51148]
+```
+
 ## Diagrams
 
 ### 1) End-to-end system architecture
