@@ -20,6 +20,24 @@ This repo is a small, readable demo of a two-stage fraud detection cascade:
 
 - Produces a shortest **k-hop relational path** from a flagged user to a known-bad anchor node.
 
+---
+
+# Additional tracks (1, 2, 4)
+
+You said track **3** (Fraud Detection, business-logic layer) is done.
+
+This repo also includes 3 extra, lightweight demos that match hackathon problem statements:
+
+1. **Credit scoring / creditworthiness**: [src/credit_scoring.py](src/credit_scoring.py)
+2. **Personalized financial advisory**: [src/advisory.py](src/advisory.py)
+4. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
+
+All three are intentionally:
+
+- simple baselines (strong enough for demo, easy to explain)
+- fast on CPU
+- interpretable (prints reasons / coefficients)
+
 ## Assumptions + covered scenarios (synthetic demo)
 
 This demo intentionally focuses on **relational fraud rings** ("business logic" abuse), not only single-transaction outliers.
@@ -247,6 +265,51 @@ py -m src.train
 # If `python` is a Microsoft Store alias, this always works:
 .\.venv\Scripts\python.exe -m src.train
 ```
+
+## Track 1 — Credit Scoring
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.credit_scoring --n 8000 --underbanked-rate 0.35 --show-explain
+```
+
+Output highlights (for screenshots):
+
+- chosen threshold on validation
+- test metrics + confusion counts
+- subgroup metrics: `banked` vs `underbanked`
+- top positive/negative logistic regression coefficients
+
+## Track 2 — Personalized Financial Advisory
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.advisory --n 2000 --market-stress 0.00 --show 5
+.\.venv\Scripts\python.exe -m src.advisory --n 2000 --market-stress 0.75 --show 5
+```
+
+Output highlights:
+
+- risk score percentiles (p10/p50/p90)
+- equity weight percentiles (dynamic risk)
+- monthly savings needed to hit goals
+- sample action plan per customer (goal-based + risk-based)
+
+## Track 4 — Cybersecurity Threat Detection (Technical Layer)
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.cyber_threat --n-events 200000 --attack-rate 0.02 --show 8
+```
+
+Output highlights:
+
+- event throughput (ev/s) + elapsed time
+- precision/recall/F1 for attacks + FPR
+- flagged examples with reasons like `failed_login_burst`, `bytes_out_spike`, `new_device_far_geo`
 
 ### Large-scale run (100M+ transactions)
 
