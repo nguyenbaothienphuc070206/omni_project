@@ -252,3 +252,157 @@ Outputs:
 - `src/model.py` small Hetero-GAT model
 - `src/explain.py` shortest-path explanation output
 - `src/train.py` end-to-end pipeline
+
+## Code walkthrough (focused, no code dumping)
+
+This section explains the *important blocks* in each file (what it does, why it exists, and what to change), without pasting the whole file.
+
+### Phase 1 — stats filter + priors
+
+#### `src/stats_layer.py`
+
+1) **Z-score helper**: stable even when std=0.
+
+```python
+def _safe_zscore(series: pd.Series) -> pd.Series:
+	mean = float(series.mean())
+	std = float(series.std(ddof=0))
+	if std == 0.0:
+		return pd.Series(np.zeros(len(series)), index=series.index)
+	return (series - mean) / std
+```
+
+- Why this way: avoids division-by-zero on flat data; predictable output.
+
+2) **Velocity feature**: per-user burstiness inside a time window.
+
+```python
+for user_id, grp in out.groupby("user_id", sort=False):
+	ts = grp["ts"].to_numpy()
+	left = 0
+	for right in range(len(ts)):
+		while ts[right] - ts[left] > velocity_window_seconds:
+			left += 1
+```
+
+- Why this way: sliding-window is O(n) per user after sorting; interpretable.
+
+3) **Anomaly score**: normalized combination of amount outlier + velocity.
+
+```python
+z_component = clip(|z|/z_thr)
+v_component = clip(v/v_thr)
+anomaly = 0.55*z_component + 0.45*v_component
+```
+
+- Why this weighting: keeps model simple; amount outliers slightly more important than velocity.
+- What to tune: `amount_z_threshold`, `velocity_threshold`, and the 0.55/0.45 weights.
+
+4) **User priors**: aggregate transactions → per-user features + label.
+
+```python
+agg = df.groupby("user_id").agg(
+  prior_anomaly_score=("anomaly_score","mean"),
+  tx_count=("transaction_id","count"),
+  avg_amount=("amount","mean"),
+  max_velocity=("velocity","max"),
+  fraud_rate=("label","mean"),
+)
+agg["user_label"] = (agg["fraud_rate"] >= 0.5).astype(int)
+```
+
+- Why not `max(label)`: avoids labeling a user as fraud due to 1 noisy event.
+
+#### `src/data.py`
+
+- `generate_synthetic_transactions(...)` builds a small DataFrame for normal training.
+- `iter_synthetic_transactions(...)` streams transactions for huge-scale demos (100M+): it yields tuples, doesn’t allocate a giant DataFrame.
+
+```python
+yield (tx_id, ts, user_id, device_id, ip_id, phone_id, amount, label)
+```
+
+- Why streaming: memory stays ~O(n_users), not O(n_transactions).
+
+### Phase 2 — hetero graph model (Torch-only default)
+
+#### `src/hetero_torch.py`
+
+- Builds a minimal hetero graph: node maps, features, and typed edge lists.
+
+```python
+edges[("user","uses_device","device")] = (u, d)
+edges[("device","used_by","user")] = (d, u)
+```
+
+- Why reverse edges: message passing needs information flow both ways.
+
+#### `src/model_torch.py`
+
+1) **No external scatter lib**: use core torch `index_add_`.
+
+```python
+out = torch.zeros((dim_size, src.shape[1]), ...)
+out.index_add_(0, index, src)
+```
+
+- Why this: highest install success on Windows; still fast enough for demo graphs.
+
+2) **Typed relations**: each relation has its own linear transform.
+
+```python
+self.rel_linear["user:uses_device:device"]
+```
+
+- Why this: device edges and ip edges carry different meaning.
+
+#### `src/graph_build.py` + `src/model.py` (optional DGL backend)
+
+- These are kept for people who want DGL; the default training path uses the torch-only backend.
+- Why keep them: optional “stretch goal” without breaking reliability.
+
+### Phase 3 — explanation (business logic)
+
+#### `src/explain.py`
+
+- Converts typed edges into a directed graph and runs BFS for a short relational path.
+
+```python
+q = deque([(start, [start])])
+while q:
+	node, path = q.popleft()
+	for nxt in G.successors(node):
+		q.append((nxt, path + [nxt]))
+```
+
+- Why BFS: deterministic, easy to explain to judges; good “actionable path”.
+
+### Orchestration — training, cascade, benchmarks
+
+#### `src/train.py`
+
+1) **Cascade routing**: stats handles CLEAR; model handles GRAY.
+
+```python
+if decision == "CLEAR_FRAUD": p = 1
+elif decision == "CLEAR_LEGIT": p = 0
+else: p = int(probs[user] >= thr)
+```
+
+- Why cascade: lower latency + fewer false positives + simpler failure modes.
+
+2) **Huge-scale demo mode** (streaming Phase 1-only):
+
+```bash
+python -m src.train --stream --phase1-only --n-transactions 100000000
+```
+
+- Why Phase1-only for 100M+: full graph training is not practical at that scale in a hackathon demo.
+
+3) **Benchmark slice**: run a small prefix and estimate full runtime (for screenshots).
+
+```bash
+python -m src.train --stream --phase1-only --n-transactions 100000000 --benchmark-transactions 2000000
+```
+
+- Why this: you get a credible “speed + estimated time” screenshot in under a minute.
