@@ -6,10 +6,142 @@ import sys
 import time
 
 
-def _run(cmd: list[str]) -> float:
+def _run_capture(cmd: list[str], *, echo: bool = True) -> tuple[float, str]:
     t0 = time.perf_counter()
-    subprocess.run(cmd, check=True)
-    return max(time.perf_counter() - t0, 1e-9)
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    dt = max(time.perf_counter() - t0, 1e-9)
+    out = p.stdout or ""
+    if echo and out:
+        # Print after process finishes; keeps output identical for screenshots.
+        print(out, end="" if out.endswith("\n") else "\n")
+    if p.returncode != 0:
+        raise subprocess.CalledProcessError(p.returncode, cmd, output=out)
+    return dt, out
+
+
+def _parse_after(prefix: str, text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line.strip()
+    return None
+
+
+def _parse_train_phase1(text: str) -> dict[str, float] | None:
+    # Streaming line example:
+    # [Streaming] processed=200,000 elapsed=16.78s speed=11,921 tx/s est_full=1.4 min for 1,000,000 tx
+    streaming = _parse_after("[Streaming]", text)
+    metrics_line = None
+    for line in text.splitlines():
+        if line.strip().startswith("acc=") and "f1_fraud=" in line and "fpr=" in line:
+            metrics_line = line.strip()
+
+    if not streaming or not metrics_line:
+        return None
+
+    def grab_number(after_key: str) -> float | None:
+        i = streaming.find(after_key)
+        if i < 0:
+            return None
+        j = i + len(after_key)
+        # read until whitespace
+        buf = []
+        while j < len(streaming) and streaming[j] not in " \t":
+            buf.append(streaming[j])
+            j += 1
+        s = "".join(buf).replace(",", "")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    speed = grab_number("speed=")
+    est_full_min = grab_number("est_full=")
+
+    # Metrics tokens: acc=... prec_fraud=... rec_fraud=... f1_fraud=... fpr=...
+    out: dict[str, float] = {}
+    for tok in metrics_line.split():
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        try:
+            out[k] = float(v)
+        except ValueError:
+            continue
+
+    if speed is None or est_full_min is None:
+        return None
+
+    return {
+        "phase1_speed_tx_s": float(speed),
+        "phase1_est_full_min": float(est_full_min),
+        "acc": float(out.get("acc", 0.0)),
+        "prec_fraud": float(out.get("prec_fraud", 0.0)),
+        "rec_fraud": float(out.get("rec_fraud", 0.0)),
+        "f1_fraud": float(out.get("f1_fraud", 0.0)),
+        "fpr": float(out.get("fpr", 1.0)),
+    }
+
+
+def _parse_ghost(text: str) -> dict[str, float] | None:
+    # Example:
+    # [Ghost] tx=1,000,000 processed=200,000 scope=sample nodes=5 elapsed=25.36s speed=7,885 tx/s est_full=2.1 min
+    head = _parse_after("[Ghost] tx=", text)
+    pass_line = _parse_after("[Ghost] private_settlement_verified=", text)
+    if not head or not pass_line:
+        return None
+
+    def grab_number(after_key: str) -> float | None:
+        i = head.find(after_key)
+        if i < 0:
+            return None
+        j = i + len(after_key)
+        buf = []
+        while j < len(head) and head[j] not in " \t":
+            buf.append(head[j])
+            j += 1
+        s = "".join(buf).replace(",", "")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    speed = grab_number("speed=")
+    est_full_min = grab_number("est_full=")
+
+    pass_rate = None
+    for tok in pass_line.split():
+        if tok.startswith("pass_rate="):
+            try:
+                pass_rate = float(tok.split("=", 1)[1])
+            except ValueError:
+                pass
+
+    if speed is None or est_full_min is None or pass_rate is None:
+        return None
+
+    return {"ghost_speed_tx_s": float(speed), "ghost_est_full_min": float(est_full_min), "ghost_pass_rate": float(pass_rate)}
+
+
+def _parse_sentinel(text: str) -> dict[str, float] | None:
+    # Example:
+    # [Sentinel] baseline metrics: {"acc": 1.0, "prec": 1.0, "rec": 1.0, "f1": 1.0, "fpr": 0.0}
+    for line in text.splitlines():
+        if "[Sentinel] baseline metrics:" in line:
+            raw = line.split(":", 1)[1].strip()
+            try:
+                import json
+
+                obj = json.loads(raw)
+                return {
+                    "sentinel_acc": float(obj.get("acc", 0.0)),
+                    "sentinel_prec": float(obj.get("prec", 0.0)),
+                    "sentinel_rec": float(obj.get("rec", 0.0)),
+                    "sentinel_f1": float(obj.get("f1", 0.0)),
+                    "sentinel_fpr": float(obj.get("fpr", 1.0)),
+                }
+            except Exception:
+                return None
+    return None
 
 
 def main() -> None:
@@ -34,6 +166,12 @@ def main() -> None:
     parser.add_argument("--advisory-n", type=int, default=2000)
     parser.add_argument("--cyber-users", type=int, default=2000)
 
+    parser.add_argument(
+        "--three-phase-only",
+        action="store_true",
+        help="Only run Track 3 Phase 1 + Phase 2 Ghost + Phase 3 Sentinel (skip Tracks 1/2/4)",
+    )
+
     parser.add_argument("--no-ghost", action="store_true", help="Skip Phase 2: Ghost Protocol demo")
     parser.add_argument("--no-sentinel", action="store_true", help="Skip Phase 3: Neural Sentinel demo")
 
@@ -41,14 +179,39 @@ def main() -> None:
 
     py = sys.executable
 
-    print("\n================ TRACK 1: CREDIT SCORING ================")
-    dt = _run([py, "-m", "src.credit_scoring", "--seed", str(args.seed), "--n", str(args.credit_n), "--show-explain"])
-    print(f"[Track 1] elapsed={dt:.2f}s")
+    if not bool(args.three_phase_only):
+        print("\n================ TRACK 1: CREDIT SCORING ================")
+        dt, _ = _run_capture([py, "-m", "src.credit_scoring", "--seed", str(args.seed), "--n", str(args.credit_n), "--show-explain"])
+        print(f"[Track 1] elapsed={dt:.2f}s")
 
-    print("\n================ TRACK 2: PERSONALIZED ADVISORY ================")
-    dt = _run([py, "-m", "src.advisory", "--seed", str(args.seed), "--n", str(args.advisory_n), "--market-stress", "0.00", "--show", "2"])
-    dt2 = _run([py, "-m", "src.advisory", "--seed", str(args.seed), "--n", str(args.advisory_n), "--market-stress", "0.75", "--show", "2"])
-    print(f"[Track 2] elapsed={dt+dt2:.2f}s")
+        print("\n================ TRACK 2: PERSONALIZED ADVISORY ================")
+        dt_a, _ = _run_capture([
+            py,
+            "-m",
+            "src.advisory",
+            "--seed",
+            str(args.seed),
+            "--n",
+            str(args.advisory_n),
+            "--market-stress",
+            "0.00",
+            "--show",
+            "2",
+        ])
+        dt_b, _ = _run_capture([
+            py,
+            "-m",
+            "src.advisory",
+            "--seed",
+            str(args.seed),
+            "--n",
+            str(args.advisory_n),
+            "--market-stress",
+            "0.75",
+            "--show",
+            "2",
+        ])
+        print(f"[Track 2] elapsed={dt_a+dt_b:.2f}s")
 
     for n in list(args.targets):
         print(f"\n================ TRACK 3: FRAUD (Phase1-only) N={n:,} ================")
@@ -58,7 +221,7 @@ def main() -> None:
         cmd += ["--n-transactions", str(int(n))]
         if not bool(args.full):
             cmd += ["--benchmark-transactions", str(int(args.benchmark))]
-        dt = _run(cmd)
+        dt, out_train = _run_capture(cmd)
         print(f"[Track 3] elapsed={dt:.2f}s")
 
         if not bool(args.no_ghost):
@@ -66,35 +229,62 @@ def main() -> None:
             cmd = [py, "-m", "src.privacy", "--seed", str(args.seed), "--n", str(int(n)), "--nodes", "5", "--show", "3"]
             if not bool(args.full):
                 cmd += ["--benchmark", str(int(args.benchmark))]
-            dt = _run(cmd)
+            dt, out_ghost = _run_capture(cmd)
             print(f"[Phase 2] elapsed={dt:.2f}s")
+        else:
+            out_ghost = ""
 
         if not bool(args.no_sentinel):
             print(f"\n================ PHASE 3: NEURAL SENTINEL (autonomous defense) N={n:,} ================")
             cmd = [py, "-m", "src.sentinel", "--seed", str(args.seed), "--n-transactions", str(int(n)), "--benchmark-transactions", str(int(args.benchmark))]
             if bool(args.hard):
                 cmd.append("--hard")
-            dt = _run(cmd)
+            dt, out_sentinel = _run_capture(cmd)
             print(f"[Phase 3] elapsed={dt:.2f}s")
+        else:
+            out_sentinel = ""
 
-        print(f"\n================ TRACK 4: CYBER (streaming) N={n:,} ================")
-        cmd = [
-            py,
-            "-m",
-            "src.cyber_threat",
-            "--seed",
-            str(args.seed),
-            "--n-events",
-            str(int(n)),
-            "--n-users",
-            str(int(args.cyber_users)),
-            "--show",
-            "5",
-        ]
-        if not bool(args.full):
-            cmd += ["--benchmark-events", str(int(args.benchmark))]
-        dt = _run(cmd)
-        print(f"[Track 4] elapsed={dt:.2f}s")
+        # 3-phase summary for this target (rates + estimated full time)
+        p1 = _parse_train_phase1(out_train) or {}
+        gp = _parse_ghost(out_ghost) or {}
+        sn = _parse_sentinel(out_sentinel) or {}
+
+        est_total = float(p1.get("phase1_est_full_min", 0.0)) + float(gp.get("ghost_est_full_min", 0.0)) + (dt / 60.0 if not bool(args.no_sentinel) else 0.0)
+        print(f"\n---------------- 3-PHASE SUMMARY N={n:,} ----------------")
+        if p1:
+            print(
+                f"[Phase 1] speed={p1['phase1_speed_tx_s']:,.0f} tx/s est_full={p1['phase1_est_full_min']:.1f} min "
+                f"acc={p1['acc']:.3f} prec_fraud={p1['prec_fraud']:.3f} rec_fraud={p1['rec_fraud']:.3f} f1_fraud={p1['f1_fraud']:.3f} fpr={p1['fpr']:.3f}"
+            )
+        if gp:
+            print(
+                f"[Phase 2] speed={gp['ghost_speed_tx_s']:,.0f} tx/s est_full={gp['ghost_est_full_min']:.1f} min pass_rate={gp['ghost_pass_rate']:.3f}"
+            )
+        if sn:
+            print(
+                f"[Phase 3] acc={sn['sentinel_acc']:.3f} prec={sn['sentinel_prec']:.3f} rec={sn['sentinel_rec']:.3f} f1={sn['sentinel_f1']:.3f} fpr={sn['sentinel_fpr']:.3f}"
+            )
+        print(f"[TOTAL] estimated_full_runtime≈{est_total:.1f} min (Phase1+Ghost + Sentinel overhead)\n")
+
+        if not bool(args.three_phase_only):
+            print(f"\n================ TRACK 4: CYBER (streaming) N={n:,} ================")
+            cmd = [
+                py,
+                "-m",
+                "src.cyber_threat",
+                "--seed",
+                str(args.seed),
+                "--n-events",
+                str(int(n)),
+                "--n-users",
+                str(int(args.cyber_users)),
+                "--show",
+                "5",
+            ]
+            if not bool(args.full):
+                cmd += ["--benchmark-events", str(int(args.benchmark))]
+            dt, _ = _run_capture(cmd)
+            print(f"[Track 4] elapsed={dt:.2f}s")
 
 
 if __name__ == "__main__":
