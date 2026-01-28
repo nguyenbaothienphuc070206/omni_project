@@ -379,6 +379,68 @@ Output highlights:
 
 Note: demo-only AMM math; no claim of eliminating impermanent loss.
 
+---
+
+## PHASE 5 — Temporal Execution Engine (Streaming + Atomic Batches)
+
+Demo module: [src/temporal_arbitrage.py](src/temporal_arbitrage.py)
+
+This is a compliance-safe latency demo: streaming ingest + atomic batch execution with FIFO fairness.
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.temporal_arbitrage --n-events 1000000 --benchmark-events 200000 --show 3
+```
+
+Output highlights:
+
+- throughput (ev/s) + `est_full`
+- `atomic_batches` + batch sizes under a microsecond budget
+- fairness signal (`fairness_violations`)
+
+---
+
+## PHASE 6 — Morphing Contracts (Auditable Versioned ABI)
+
+Demo module: [src/morphing_contracts.py](src/morphing_contracts.py)
+
+Compliance-safe version of "morphing": explicit ABI versions + rotating capability token (key rotation), not audit evasion.
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.morphing_contracts --n-calls 500000 --benchmark-calls 200000 --show 3
+```
+
+---
+
+## PHASE 7 — Quantum-Ready Ledger (Crypto-Agility Plumbing)
+
+Demo module: [src/quantum_ledger.py](src/quantum_ledger.py)
+
+This is a demo ledger showing how you can swap signing algorithms behind a stable API. Demo-only (hash tags), not real PQ crypto.
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.quantum_ledger --n-blocks 500000 --benchmark-blocks 200000 --show 2
+```
+
+---
+
+## PHASE 8 — Neuromorphic Governance (AI-Assisted, Human-Gated)
+
+Demo module: [src/neuromorphic_governance.py](src/neuromorphic_governance.py)
+
+AI assists proposal scoring from synthetic on/off-chain signals, but execution stays gated (quorum + optional human veto).
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.neuromorphic_governance --n-signals 1000000 --benchmark-signals 200000 --show 2
+```
+
 ## Run everything (tracks 1,2,3,4)
 
 If you want one command that prints everything in order (useful for screenshots), run:

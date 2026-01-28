@@ -233,6 +233,10 @@ def main() -> None:
     parser.add_argument("--no-ghost", action="store_true", help="Skip Phase 2: Ghost Protocol demo")
     parser.add_argument("--no-sentinel", action="store_true", help="Skip Phase 3: Neural Sentinel demo")
     parser.add_argument("--no-vortex", action="store_true", help="Skip Phase 4: Liquidity Vortex demo")
+    parser.add_argument("--no-phase5", action="store_true", help="Skip Phase 5: Temporal Execution Engine demo")
+    parser.add_argument("--no-phase6", action="store_true", help="Skip Phase 6: Versioned ABI + rotation demo")
+    parser.add_argument("--no-phase7", action="store_true", help="Skip Phase 7: Quantum-ready ledger demo")
+    parser.add_argument("--no-phase8", action="store_true", help="Skip Phase 8: Neuromorphic governance demo")
 
     args = parser.parse_args()
 
@@ -325,6 +329,38 @@ def main() -> None:
             print(f"[Phase 4] elapsed={dt:.2f}s")
         else:
             out_vortex = ""
+
+        if (not bool(args.three_phase_only)) and (not bool(args.no_phase5)):
+            print(f"\n================ PHASE 5: TEMPORAL EXECUTION (streaming atomic batches) N={n:,} ================")
+            cmd = [py, "-m", "src.temporal_arbitrage", "--seed", str(args.seed), "--n-events", str(int(n)), "--show", "3"]
+            if not bool(args.full):
+                cmd += ["--benchmark-events", str(int(args.benchmark))]
+            dt, _ = _run_capture(cmd)
+            print(f"[Phase 5] elapsed={dt:.2f}s")
+
+        if (not bool(args.three_phase_only)) and (not bool(args.no_phase6)):
+            print(f"\n================ PHASE 6: MORPHING CONTRACTS (versioned ABI) N={n:,} ================")
+            cmd = [py, "-m", "src.morphing_contracts", "--seed", str(args.seed), "--n-calls", str(int(n)), "--show", "3"]
+            if not bool(args.full):
+                cmd += ["--benchmark-calls", str(int(args.benchmark))]
+            dt, _ = _run_capture(cmd)
+            print(f"[Phase 6] elapsed={dt:.2f}s")
+
+        if (not bool(args.three_phase_only)) and (not bool(args.no_phase7)):
+            print(f"\n================ PHASE 7: QUANTUM-READY LEDGER (crypto agility) N={n:,} ================")
+            cmd = [py, "-m", "src.quantum_ledger", "--seed", str(args.seed), "--n-blocks", str(int(n)), "--show", "2"]
+            if not bool(args.full):
+                cmd += ["--benchmark-blocks", str(int(args.benchmark))]
+            dt, _ = _run_capture(cmd)
+            print(f"[Phase 7] elapsed={dt:.2f}s")
+
+        if (not bool(args.three_phase_only)) and (not bool(args.no_phase8)):
+            print(f"\n================ PHASE 8: NEUROMORPHIC GOVERNANCE (AI-assisted) N={n:,} ================")
+            cmd = [py, "-m", "src.neuromorphic_governance", "--seed", str(args.seed), "--n-signals", str(int(n)), "--show", "2"]
+            if not bool(args.full):
+                cmd += ["--benchmark-signals", str(int(args.benchmark))]
+            dt, _ = _run_capture(cmd)
+            print(f"[Phase 8] elapsed={dt:.2f}s")
 
         # Pipeline summary for this target (rates + estimated full time)
         p1 = _parse_train_phase1(out_train) or {}
