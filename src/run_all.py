@@ -144,6 +144,64 @@ def _parse_sentinel(text: str) -> dict[str, float] | None:
     return None
 
 
+def _parse_vortex(text: str) -> dict[str, float] | None:
+    # Example:
+    # [Vortex] trades=1,000,000 processed=200,000 scope=sample elapsed=2.40s speed=83,238 trades/s est_full=0.2 min
+    head = _parse_after("[Vortex] trades=", text)
+    if not head:
+        return None
+
+    def grab_number(after_key: str) -> float | None:
+        i = head.find(after_key)
+        if i < 0:
+            return None
+        j = i + len(after_key)
+        buf = []
+        while j < len(head) and head[j] not in " \t":
+            buf.append(head[j])
+            j += 1
+        s = "".join(buf).replace(",", "")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    speed = grab_number("speed=")
+    est_full_min = grab_number("est_full=")
+    if speed is None or est_full_min is None:
+        return None
+
+    # Optional stats lines:
+    # [Vortex] slippage_bps mean=3.73 p95~10 max=26.57
+    slip = _parse_after("[Vortex] slippage_bps", text) or ""
+    alpha = _parse_after("[Vortex] alpha", text) or ""
+
+    def grab_from_line(line: str, key: str) -> float | None:
+        i = line.find(key)
+        if i < 0:
+            return None
+        j = i + len(key)
+        buf = []
+        while j < len(line) and line[j] not in " \t":
+            buf.append(line[j])
+            j += 1
+        try:
+            return float("".join(buf))
+        except ValueError:
+            return None
+
+    return {
+        "vortex_speed_trades_s": float(speed),
+        "vortex_est_full_min": float(est_full_min),
+        "vortex_slippage_mean_bps": float(grab_from_line(slip, "mean=") or 0.0),
+        "vortex_slippage_p95_bps": float(grab_from_line(slip, "p95~") or 0.0),
+        "vortex_slippage_max_bps": float(grab_from_line(slip, "max=") or 0.0),
+        "vortex_alpha_mean": float(grab_from_line(alpha, "mean=") or 0.0),
+        "vortex_alpha_min": float(grab_from_line(alpha, "min=") or 0.0),
+        "vortex_alpha_max": float(grab_from_line(alpha, "max=") or 0.0),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run all hackathon tracks (1,2,3,4) with consistent, screenshot-friendly output (includes Ghost+Sentinel phases)"
@@ -174,6 +232,7 @@ def main() -> None:
 
     parser.add_argument("--no-ghost", action="store_true", help="Skip Phase 2: Ghost Protocol demo")
     parser.add_argument("--no-sentinel", action="store_true", help="Skip Phase 3: Neural Sentinel demo")
+    parser.add_argument("--no-vortex", action="store_true", help="Skip Phase 4: Liquidity Vortex demo")
 
     args = parser.parse_args()
 
@@ -244,13 +303,43 @@ def main() -> None:
         else:
             out_sentinel = ""
 
-        # 3-phase summary for this target (rates + estimated full time)
+        # Phase 4 is optional; if user asks for "three-phase-only", stop at Phase 3.
+        if (not bool(args.three_phase_only)) and (not bool(args.no_vortex)):
+            print(f"\n================ PHASE 4: LIQUIDITY VORTEX (hyperbolic AMM) N={n:,} ================")
+            cmd = [
+                py,
+                "-m",
+                "src.liquidity_vortex",
+                "--seed",
+                str(args.seed),
+                "--n-trades",
+                str(int(n)),
+                "--avg-size",
+                "150",
+                "--show",
+                "3",
+            ]
+            if not bool(args.full):
+                cmd += ["--benchmark-trades", str(int(args.benchmark))]
+            dt, out_vortex = _run_capture(cmd)
+            print(f"[Phase 4] elapsed={dt:.2f}s")
+        else:
+            out_vortex = ""
+
+        # Pipeline summary for this target (rates + estimated full time)
         p1 = _parse_train_phase1(out_train) or {}
         gp = _parse_ghost(out_ghost) or {}
         sn = _parse_sentinel(out_sentinel) or {}
+        vx = _parse_vortex(out_vortex) or {}
 
-        est_total = float(p1.get("phase1_est_full_min", 0.0)) + float(gp.get("ghost_est_full_min", 0.0)) + (dt / 60.0 if not bool(args.no_sentinel) else 0.0)
-        print(f"\n---------------- 3-PHASE SUMMARY N={n:,} ----------------")
+        est_total = (
+            float(p1.get("phase1_est_full_min", 0.0))
+            + float(gp.get("ghost_est_full_min", 0.0))
+            + float(vx.get("vortex_est_full_min", 0.0))
+            + (dt / 60.0 if not bool(args.no_sentinel) else 0.0)
+        )
+        label = "3-PHASE" if (not vx) else "4-PHASE"
+        print(f"\n---------------- {label} SUMMARY N={n:,} ----------------")
         if p1:
             print(
                 f"[Phase 1] speed={p1['phase1_speed_tx_s']:,.0f} tx/s est_full={p1['phase1_est_full_min']:.1f} min "
@@ -264,7 +353,16 @@ def main() -> None:
             print(
                 f"[Phase 3] acc={sn['sentinel_acc']:.3f} prec={sn['sentinel_prec']:.3f} rec={sn['sentinel_rec']:.3f} f1={sn['sentinel_f1']:.3f} fpr={sn['sentinel_fpr']:.3f}"
             )
-        print(f"[TOTAL] estimated_full_runtime≈{est_total:.1f} min (Phase1+Ghost + Sentinel overhead)\n")
+        if vx:
+            print(
+                f"[Phase 4] speed={vx['vortex_speed_trades_s']:,.0f} trades/s est_full={vx['vortex_est_full_min']:.1f} min "
+                f"slip_mean={vx['vortex_slippage_mean_bps']:.2f}bps p95~{vx['vortex_slippage_p95_bps']:.0f} max={vx['vortex_slippage_max_bps']:.2f} "
+                f"alpha_mean={vx['vortex_alpha_mean']:.3f}"
+            )
+        if vx:
+            print(f"[TOTAL] estimated_full_runtime~{est_total:.1f} min (Phase1+Ghost+Vortex + Sentinel overhead)\n")
+        else:
+            print(f"[TOTAL] estimated_full_runtime~{est_total:.1f} min (Phase1+Ghost + Sentinel overhead)\n")
 
         if not bool(args.three_phase_only):
             print(f"\n================ TRACK 4: CYBER (streaming) N={n:,} ================")

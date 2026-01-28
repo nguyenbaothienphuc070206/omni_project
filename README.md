@@ -357,6 +357,28 @@ Output highlights:
 - baseline self-check metrics parsed from `src.train`
 - if metrics violate policy, proposes a safer `PHASE1_THRESHOLD` (grid-search)
 
+---
+
+## PHASE 4 — The Liquidity Vortex (Hyperbolic AMM Demo)
+
+Demo module: [src/liquidity_vortex.py](src/liquidity_vortex.py)
+
+This is a simple, CPU-friendly AMM simulator using a **hyperbolic (non-Euclidean) bonding curve** and a **volatility-adaptive slope**.
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.liquidity_vortex --n-trades 1000000 --benchmark-trades 200000 --show 3
+```
+
+Output highlights:
+
+- `slippage_bps` mean / p95 / max
+- throughput (trades/s) + `est_full` time estimate
+- alpha range (how the curve steepens under volatility)
+
+Note: demo-only AMM math; no claim of eliminating impermanent loss.
+
 ## Run everything (tracks 1,2,3,4)
 
 If you want one command that prints everything in order (useful for screenshots), run:
@@ -375,7 +397,10 @@ Optional flags:
 
 ```bash
 # If you only want the original tracks (skip the new phases):
-.\.venv\Scripts\python.exe -m src.run_all --hard --targets 100000000 123456789 --benchmark 2000000 --no-ghost --no-sentinel
+.\.venv\Scripts\python.exe -m src.run_all --hard --targets 100000000 123456789 --benchmark 2000000 --no-ghost --no-sentinel --no-vortex
+
+# Only run Phase 1/2/3 (skip Track 1/2/4 and Phase 4):
+.\.venv\Scripts\python.exe -m src.run_all --hard --three-phase-only --targets 100000000 123456789 --benchmark 2000000
 ```
 
 ### Large-scale run (100M+ transactions)
