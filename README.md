@@ -28,9 +28,9 @@ You said track **3** (Fraud Detection, business-logic layer) is done.
 
 This repo also includes 3 extra, lightweight demos that match hackathon problem statements:
 
-1. **Credit scoring / creditworthiness**: [src/credit_scoring.py](src/credit_scoring.py)
-2. **Personalized financial advisory**: [src/advisory.py](src/advisory.py)
-4. **Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
+- **Track 1 — Credit scoring / creditworthiness**: [src/credit_scoring.py](src/credit_scoring.py)
+- **Track 2 — Personalized financial advisory**: [src/advisory.py](src/advisory.py)
+- **Track 4 — Cybersecurity threat detection**: [src/cyber_threat.py](src/cyber_threat.py)
 
 All three are intentionally:
 
@@ -321,6 +321,41 @@ Output highlights:
 - event throughput (ev/s) + elapsed time
 - precision/recall/F1 for attacks + FPR
 - flagged examples with reasons like `failed_login_burst`, `bytes_out_spike`, `new_device_far_geo`
+
+---
+
+## PHASE 2 — Ghost Protocol (Privacy & Stealth Compliance)
+
+Demo module: [src/privacy.py](src/privacy.py)
+
+Run:
+
+```bash
+.\.venv\Scripts\python.exe -m src.privacy --n 50000 --nodes 5 --show 5
+```
+
+Output highlights:
+
+- `private_settlement_verified` pass rate
+- `blind_audit_anchor (merkle_root)` as a system-wide audit anchor
+- `shadow metadata shards` (hashed + sharded, no plaintext)
+
+Note: this is an API/architecture demo, not production ZK-SNARK/HE.
+
+## PHASE 3 — Neural Sentinel (Autonomous Defense)
+
+Demo module: [src/sentinel.py](src/sentinel.py)
+
+Run (safe auto-mitigation via threshold tuning; no self-modifying code):
+
+```bash
+.\.venv\Scripts\python.exe -m src.sentinel --hard --n-transactions 1000000 --benchmark-transactions 500000
+```
+
+Output highlights:
+
+- baseline self-check metrics parsed from `src.train`
+- if metrics violate policy, proposes a safer `PHASE1_THRESHOLD` (grid-search)
 
 ## Run everything (tracks 1,2,3,4)
 
