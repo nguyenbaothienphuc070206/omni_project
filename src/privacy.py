@@ -145,6 +145,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 2 demo: Ghost Protocol (privacy & compliance, simplified)")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--n", type=int, default=GhostConfig.n_transactions)
+    parser.add_argument(
+        "--benchmark",
+        type=int,
+        default=None,
+        help="Process only the first N tx and estimate full runtime for large targets",
+    )
     parser.add_argument("--nodes", type=int, default=GhostConfig.n_nodes)
     parser.add_argument("--show", type=int, default=5, help="Print N sample tx proofs + metadata shards")
     args = parser.parse_args()
@@ -159,11 +165,17 @@ def main() -> None:
     bad = 0
     commitments: list[str] = []
 
+    n_requested = int(args.n)
+    n_process = int(args.benchmark) if args.benchmark is not None else n_requested
+    n_process = min(n_process, n_requested)
+    if args.benchmark is not None and n_process < n_requested:
+        print(f"\n[Benchmark] Processing {n_process:,} of {n_requested:,} Ghost tx (estimate full runtime).")
+
     t0 = time.perf_counter()
     examples: list[str] = []
 
     for idx, (tx_id, sender, receiver, amount_cents, meta) in enumerate(
-        iter_synthetic_ghost_transactions(seed=int(args.seed), n=int(args.n))
+        iter_synthetic_ghost_transactions(seed=int(args.seed), n=int(n_process))
     ):
         # Synthetic "hidden" balance; most should pass.
         balance_cents = amount_cents + (50_000 if (idx % 10 != 0) else -5_000)
@@ -195,11 +207,21 @@ def main() -> None:
             )
 
     dt = max(time.perf_counter() - t0, 1e-9)
+    tx_per_sec = n_process / dt
+    est_full_sec = (n_requested / tx_per_sec) if tx_per_sec > 0 else float("inf")
+
     root = _merkle_root(commitments)
 
-    print(f"\n[Ghost] tx={int(args.n):,} nodes={int(args.nodes)} elapsed={dt:.2f}s speed={int(args.n)/dt:,.0f} tx/s")
+    scope = "full" if n_process == n_requested else "sample"
+    print(
+        f"\n[Ghost] tx={n_requested:,} processed={n_process:,} scope={scope} nodes={int(args.nodes)} "
+        f"elapsed={dt:.2f}s speed={tx_per_sec:,.0f} tx/s est_full={est_full_sec/60:.1f} min"
+    )
     print(f"[Ghost] private_settlement_verified={ok} rejected={bad} pass_rate={ok/max(ok+bad,1):.3f}")
-    print(f"[Ghost] blind_audit_anchor (merkle_root)={root}")
+    if scope == "full":
+        print(f"[Ghost] blind_audit_anchor (merkle_root)={root}")
+    else:
+        print(f"[Ghost] blind_audit_anchor_sample (merkle_root)={root}")
 
     if examples:
         print("\n[Ghost] examples:")

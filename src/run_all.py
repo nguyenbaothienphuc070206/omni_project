@@ -13,7 +13,9 @@ def _run(cmd: list[str]) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run all hackathon tracks (1,2,3,4) with consistent, screenshot-friendly output")
+    parser = argparse.ArgumentParser(
+        description="Run all hackathon tracks (1,2,3,4) with consistent, screenshot-friendly output (includes Ghost+Sentinel phases)"
+    )
     parser.add_argument(
         "--targets",
         type=int,
@@ -31,6 +33,9 @@ def main() -> None:
     parser.add_argument("--credit-n", type=int, default=8000)
     parser.add_argument("--advisory-n", type=int, default=2000)
     parser.add_argument("--cyber-users", type=int, default=2000)
+
+    parser.add_argument("--no-ghost", action="store_true", help="Skip Phase 2: Ghost Protocol demo")
+    parser.add_argument("--no-sentinel", action="store_true", help="Skip Phase 3: Neural Sentinel demo")
 
     args = parser.parse_args()
 
@@ -55,6 +60,22 @@ def main() -> None:
             cmd += ["--benchmark-transactions", str(int(args.benchmark))]
         dt = _run(cmd)
         print(f"[Track 3] elapsed={dt:.2f}s")
+
+        if not bool(args.no_ghost):
+            print(f"\n================ PHASE 2: GHOST PROTOCOL (privacy/compliance) N={n:,} ================")
+            cmd = [py, "-m", "src.privacy", "--seed", str(args.seed), "--n", str(int(n)), "--nodes", "5", "--show", "3"]
+            if not bool(args.full):
+                cmd += ["--benchmark", str(int(args.benchmark))]
+            dt = _run(cmd)
+            print(f"[Phase 2] elapsed={dt:.2f}s")
+
+        if not bool(args.no_sentinel):
+            print(f"\n================ PHASE 3: NEURAL SENTINEL (autonomous defense) N={n:,} ================")
+            cmd = [py, "-m", "src.sentinel", "--seed", str(args.seed), "--n-transactions", str(int(n)), "--benchmark-transactions", str(int(args.benchmark))]
+            if bool(args.hard):
+                cmd.append("--hard")
+            dt = _run(cmd)
+            print(f"[Phase 3] elapsed={dt:.2f}s")
 
         print(f"\n================ TRACK 4: CYBER (streaming) N={n:,} ================")
         cmd = [

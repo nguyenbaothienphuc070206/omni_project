@@ -368,7 +368,15 @@ If you want one command that prints everything in order (useful for screenshots)
 Notes:
 
 - Tracks 1/2 are customer-level demos and do not use `--targets` as "transactions".
+- Track 3 runs Phase 1 (stats) + Phase 2 (Ghost Protocol) + Phase 3 (Neural Sentinel) by default.
 - Tracks 3/4 are the big-scale tracks; by default this runner uses benchmark slices to estimate full runtime.
+
+Optional flags:
+
+```bash
+# If you only want the original tracks (skip the new phases):
+.\.venv\Scripts\python.exe -m src.run_all --hard --targets 100000000 123456789 --benchmark 2000000 --no-ghost --no-sentinel
+```
 
 ### Large-scale run (100M+ transactions)
 
