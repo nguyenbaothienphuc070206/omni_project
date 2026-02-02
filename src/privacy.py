@@ -2,39 +2,95 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import time
 from dataclasses import dataclass
 from typing import Iterable
 
 
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def _hash_bytes(data: bytes) -> bytes:
+    # Faster than SHA-256 in CPython stdlib for many small messages.
+    return hashlib.blake2s(data, digest_size=32).digest()
 
 
-def _h(*parts: str) -> str:
-    return _sha256("|".join(parts).encode("utf-8"))
+def _hash_hex(data: bytes) -> str:
+    return _hash_bytes(data).hex()
 
 
-def _merkle_root(leaves: list[str]) -> str:
-    """Small Merkle root helper for audit anchors.
+def _h_hex(*parts: str) -> str:
+    return _hash_hex("|".join(parts).encode("utf-8"))
 
-    Leaves are hex strings.
+
+def _h_bytes(*parts: str) -> bytes:
+    return _hash_bytes("|".join(parts).encode("utf-8"))
+
+
+class _MerkleAccumulator:
+    """Streaming Merkle accumulator.
+
+    Keeps O(log n) state and avoids storing all leaves.
+    Leaves are raw digest bytes.
     """
 
-    if not leaves:
-        return _sha256(b"")
+    def __init__(self) -> None:
+        self._levels: list[bytes | None] = []
+        self._count = 0
 
-    level = [bytes.fromhex(x) for x in leaves]
-    while len(level) > 1:
-        if len(level) % 2 == 1:
-            level.append(level[-1])
-        nxt: list[bytes] = []
-        for i in range(0, len(level), 2):
-            nxt.append(hashlib.sha256(level[i] + level[i + 1]).digest())
-        level = nxt
-    return level[0].hex()
+    def add(self, leaf_digest: bytes) -> None:
+        h = leaf_digest
+        lvl = 0
+        while True:
+            if lvl >= len(self._levels):
+                self._levels.append(h)
+                break
+            cur = self._levels[lvl]
+            if cur is None:
+                self._levels[lvl] = h
+                break
+            self._levels[lvl] = None
+            h = _hash_bytes(cur + h)
+            lvl += 1
+        self._count += 1
+
+    def root_hex(self) -> str:
+        if self._count <= 0:
+            return _hash_hex(b"")
+
+        # Fold remaining nodes upward. To mimic the "duplicate last" behavior
+        # for odd counts, any unpaired node at a level is duplicated.
+        node: bytes | None = None
+        for lvl in range(len(self._levels)):
+            cur = self._levels[lvl]
+            if cur is None:
+                continue
+            if node is None:
+                node = cur
+            else:
+                node = _hash_bytes(cur + node)
+
+        if node is None:
+            return _hash_hex(b"")
+
+        # Duplicate upward for remaining height (standard padding).
+        for _ in range(len(self._levels)):
+            node = _hash_bytes(node + node)
+
+        return node.hex()
+
+
+def _encode_metadata_bytes(metadata: dict[str, str]) -> bytes:
+    # Faster than json.dumps(sort_keys=True) and still deterministic.
+    # Keys are fixed in iter_synthetic_ghost_transactions.
+    return (
+        "channel="
+        + metadata.get("channel", "")
+        + "|purpose="
+        + metadata.get("purpose", "")
+        + "|device="
+        + metadata.get("device", "")
+        + "|ip="
+        + metadata.get("ip", "")
+    ).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -73,7 +129,7 @@ class PrivateSettlementEngine:
         self._secret = server_secret
 
     def commit_balance(self, *, account_id: str, balance_cents: int, salt: str) -> str:
-        return _h("bal", account_id, str(balance_cents), salt)
+        return _h_hex("bal", account_id, str(balance_cents), salt)
 
     def prove_sufficient_balance(
         self,
@@ -86,14 +142,14 @@ class PrivateSettlementEngine:
     ) -> PrivateSettlementProof:
         ok = balance_cents >= amount_cents
         commitment = self.commit_balance(account_id=account_id, balance_cents=balance_cents, salt=salt)
-        statement = _h("stmt", tx_id, account_id, str(amount_cents), commitment)
-        proof = _sha256(self._secret + statement.encode("utf-8") + (b"1" if ok else b"0"))
+        statement = _h_hex("stmt", tx_id, account_id, str(amount_cents), commitment)
+        proof = _hash_hex(self._secret + statement.encode("utf-8") + (b"1" if ok else b"0"))
         return PrivateSettlementProof(commitment=commitment, statement=statement, proof=proof)
 
     def verify(self, proof: PrivateSettlementProof) -> bool:
         # Demo verifier: the server can verify the tag.
         # A real ZK verifier would not need the secret.
-        expected_prefix = _sha256(self._secret + proof.statement.encode("utf-8") + b"1")
+        expected_prefix = _hash_hex(self._secret + proof.statement.encode("utf-8") + b"1")
         return proof.proof == expected_prefix
 
 
@@ -107,15 +163,20 @@ class ShadowMetadataStore:
         self.n_nodes = int(n_nodes)
         self._nodes: list[dict[str, str]] = [dict() for _ in range(self.n_nodes)]
 
-    def put(self, *, tx_id: str, metadata: dict[str, str]) -> str:
-        digest = _sha256(json.dumps(metadata, sort_keys=True).encode("utf-8"))
+    def shards_for_digest(self, *, digest_hex: str) -> list[str]:
+        shard_len = max(len(digest_hex) // self.n_nodes, 1)
+        return [digest_hex[i * shard_len : (i + 1) * shard_len] for i in range(self.n_nodes)]
 
-        # Split digest into N shards (simple deterministic slicing).
-        # This is a demo for "distributed tracing resistance".
-        shard_len = max(len(digest) // self.n_nodes, 1)
-        for i in range(self.n_nodes):
-            shard = digest[i * shard_len : (i + 1) * shard_len]
-            self._nodes[i][tx_id] = shard
+    def put(self, *, tx_id: str, metadata: dict[str, str], store: bool) -> str:
+        digest = _hash_hex(_encode_metadata_bytes(metadata))
+
+        # Storing all shards for huge N is slow and memory-heavy.
+        # We only persist shards when we intend to show examples.
+        if store:
+            shards = self.shards_for_digest(digest_hex=digest)
+            nodes = self._nodes
+            for i in range(self.n_nodes):
+                nodes[i][tx_id] = shards[i]
 
         return digest
 
@@ -163,7 +224,7 @@ def main() -> None:
     # We simulate a sender balance fresh per tx for a simple demo.
     ok = 0
     bad = 0
-    commitments: list[str] = []
+    merkle = _MerkleAccumulator()
 
     n_requested = int(args.n)
     n_process = int(args.benchmark) if args.benchmark is not None else n_requested
@@ -174,12 +235,16 @@ def main() -> None:
     t0 = time.perf_counter()
     examples: list[str] = []
 
+    hash_hex = _hash_hex
+    h_bytes = _h_bytes
+
+    show_n = int(args.show)
     for idx, (tx_id, sender, receiver, amount_cents, meta) in enumerate(
         iter_synthetic_ghost_transactions(seed=int(args.seed), n=int(n_process))
     ):
         # Synthetic "hidden" balance; most should pass.
         balance_cents = amount_cents + (50_000 if (idx % 10 != 0) else -5_000)
-        salt = _sha256(f"{sender}:{tx_id}".encode("utf-8"))[:16]
+        salt = hash_hex((sender + ":" + tx_id).encode("utf-8"))[:16]
 
         proof = engine.prove_sufficient_balance(
             account_id=sender,
@@ -191,17 +256,18 @@ def main() -> None:
         verified = engine.verify(proof)
 
         # Shadow metadata storage (hashed + sharded)
-        meta_hash = store.put(tx_id=tx_id, metadata=meta)
+        want_store = (show_n > 0) and (len(examples) < show_n)
+        meta_hash = store.put(tx_id=tx_id, metadata=meta, store=want_store)
 
         if verified:
             ok += 1
         else:
             bad += 1
 
-        commitments.append(_h("tx", tx_id, sender, receiver, str(amount_cents), proof.commitment, meta_hash))
+        merkle.add(h_bytes("tx", tx_id, sender, receiver, str(amount_cents), proof.commitment, meta_hash))
 
-        if len(examples) < int(args.show):
-            shards = store.get_shards(tx_id=tx_id)
+        if len(examples) < show_n:
+            shards = store.get_shards(tx_id=tx_id) if want_store else store.shards_for_digest(digest_hex=meta_hash)
             examples.append(
                 f"- {tx_id} sender={sender} receiver={receiver} amount_cents={amount_cents} verified={verified} meta_hash={meta_hash[:12]}.. shards={shards}"
             )
@@ -210,7 +276,7 @@ def main() -> None:
     tx_per_sec = n_process / dt
     est_full_sec = (n_requested / tx_per_sec) if tx_per_sec > 0 else float("inf")
 
-    root = _merkle_root(commitments)
+    root = merkle.root_hex()
 
     scope = "full" if n_process == n_requested else "sample"
     print(
